@@ -1,0 +1,70 @@
+﻿
+NetSuite Import Processor v5
+==================================================
+
+Step 1: Loading mapping file...
+Copying to: C:\Users\matan\AppData\Local\Temp\tmpC8C2.tmp.xlsx
+File copied
+Opening ZIP...
+ZIP opened, entries: 10
+Reading shared strings...
+Loaded 1236 shared strings
+Reading sheet1.xml...
+Sheet loaded
+Found 543 rows
+Parsing header row...
+Header has 7 cells
+  A : 'LS internal'
+    -> Found Internal column!
+  B : 'LS account'
+  C : 'LS account name'
+  D : 'LS account type'
+  E : 'Konto KG'
+  F : 'Nazwa'
+  G : 'Intercompany'
+    -> Found Intercompany column!
+After header parsing: Internal=A, Intercompany=G
+Internal column: A
+Intercompany column: G
+
+Step 2: Building mapping dictionary...
+Processing 542 data rows...
+  Row 100/542...
+  Row 200/542...
+  Row 300/542...
+  Row 400/542...
+  Row 500/542...
+Mapping loop completed
+Loaded 124 mappings
+  I/C accounts: 8
+  Non-I/C accounts: 116
+
+Sample I/C accounts:
+  962
+  961
+  497
+  244
+  601
+
+Step 3: Loading CSV file...
+Loaded 43604 rows
+CSV Internal: 'Internal '
+CSV Subsidiary: 'Subsidiary'
+
+Step 4: Processing rows...
+  Processed 10000 rows...
+  Processed 20000 rows...
+  Processed 30000 rows...
+  Processed 40000 rows...
+Found 268 I/C transactions
+
+Step 5: Duplicating I/C transactions...
+Final row count: 43872
+
+Step 6: Saving to CSV...
+Saved to: C:\Users\matan\OneDrive\desktop\NetSuite_to_be_imported.csv
+
+ERROR: Cannot bind parameter 'ForegroundColor'. Cannot convert value "+" to type "System.ConsoleColor". Error: "Unable to match the identifier name + to a valid enumerator name. Specify one of the following enumerator names and try again:
+Black, DarkBlue, DarkGreen, DarkCyan, DarkRed, DarkMagenta, DarkYellow, Gray, DarkGray, Blue, Green, Cyan, Red, Magenta, Yellow, White"
+at Write-Log, C:\Users\matan\OneDrive\desktop\NetSuite import\NetSuite_Processor_V5.ps1: line 15
+at <ScriptBlock>, C:\Users\matan\OneDrive\desktop\NetSuite import\NetSuite_Processor_V5.ps1: line 254
