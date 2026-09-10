@@ -59,11 +59,19 @@ three `.js` files into it.
 - **Name**: `Statscore JE Creator - Post`
 - **ID**: `_statscore_je_sched` (NetSuite prefixes it, giving `customscript_statscore_je_sched`)
 
-On the **Parameters** subtab add one:
+On the **Parameters** subtab add two. **Leave Preference blank on both.** Blank makes them
+deployment parameters, which is what the Suitelet overrides at submit time and what you edit on
+the deployment record. Setting Company or User turns them into general preferences and they stop
+working.
 
 | Label | ID | Type | Preference |
 | --- | --- | --- | --- |
-| Job File | `_statscore_je_job` (becomes `custscript_statscore_je_job`) | Integer Number | Entry Form |
+| Job File | `_statscore_je_job` (becomes `custscript_statscore_je_job`) | Integer Number | blank |
+| Copy Results To | `_statscore_je_copyto` (becomes `custscript_statscore_je_copyto`) | Free-Form Text | blank |
+
+After deploying, edit the **deployment** record, open its Parameters tab and set **Copy Results
+To** to whoever should be copied on every result: employee internal IDs or email addresses,
+comma separated. Leave Job File empty; the Suitelet fills it per run.
 
 Save, then **Deploy Script**:
 
@@ -117,6 +125,31 @@ queue is busy the job can sit at Queued for 30 to 60 minutes before it starts, t
 90 seconds per 4,000 lines. That is normal and does not mean it failed. Never upload and post the
 same file again while a job is queued: the tool now refuses that outright, but the safe habit is
 to wait or reopen the status page rather than start over.
+
+## Result emails
+
+When a job finishes, an HTML email goes out automatically:
+
+- **To** the person who submitted it, taken from the job record, so whoever ran it hears back
+  even when they are covering for someone else.
+- **Copied to** everyone in the **Copy Results To** parameter on the deployment.
+
+Success carries the JE number, a direct link to the entry, the period, the totals, the line
+count, the source file name and how long the run took. Failure carries the error and points at
+the execution log.
+
+Three situations that used to fail silently now email the copy list as well, because in each of
+them a job would otherwise sit looking queued forever with nobody told:
+
+- the posting script starts with no job (usually means someone gave the deployment a schedule)
+- its job file cannot be read (expected if you deleted the file to cancel a job)
+- a task fires for a job that is not PENDING (an earlier attempt died mid-save; check NetSuite
+  for a partially created entry before re-running)
+
+To change who is copied, edit the deployment parameter. No code change and no re-upload.
+
+Sending happens after the result is already recorded and is fully caught, so a mail problem can
+never affect a posted entry or what the status page says.
 
 ## What the posted entry looks like
 
