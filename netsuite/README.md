@@ -112,6 +112,12 @@ const JOB_PARAM       = 'custscript_statscore_je_job';
 5. Click **Create Journal Entry**. The status page shows Queued, then Building, then Done with a
    link to the entry. Closing the page does not stop the job.
 
+**Queued can mean a long wait.** NetSuite runs scheduled scripts from a shared queue. When that
+queue is busy the job can sit at Queued for 30 to 60 minutes before it starts, then take about
+90 seconds per 4,000 lines. That is normal and does not mean it failed. Never upload and post the
+same file again while a job is queued: the tool now refuses that outright, but the safe habit is
+to wait or reopen the status page rather than start over.
+
 ## What the posted entry looks like
 
 Fixed for every line, matching the entries already in the account:
@@ -155,7 +161,17 @@ One cosmetic difference: line memos are trimmed of leading and trailing spaces.
 
 ## Safety
 
-- The preview never writes anything. The first write happens when you click Create.
+Four separate things have to line up before a month can be posted twice:
+
+1. **An in-flight job blocks everything.** If a job for the same period is Queued or Running, the
+   preview refuses to offer the Create button and the submit handler refuses outright. There is no
+   override. This is the guard against resubmitting during a long queue wait.
+2. **An already-posted period needs an explicit tick.** The preview names the existing entry with a
+   link and the Create button will not post until you confirm.
+3. The submit handler re-runs both checks against the staged file rather than trusting the browser.
+4. Both checks fail closed at submit: if NetSuite cannot be queried, nothing is posted.
+
+- The preview writes no accounting records. It does stage a copy of the CSV in the working folder.
 - The submit handler re-reads and re-validates the staged file rather than trusting what the
   browser posted back, and re-runs the duplicate check.
 - The posting script only ever acts on a job marked `PENDING`. If a run dies mid-save the job stays
@@ -169,7 +185,15 @@ One cosmetic difference: line memos are trimmed of leading and trailing spaces.
 to finish, then submit again.
 
 **Status stuck on Queued** - the scheduled script queue is busy with other jobs. It will start.
-The page cross-checks the queue and will say so if the script actually failed.
+Waits of 30 to 60 minutes have been seen on this account. The page shows how long it has been
+waiting and cross-checks the queue, and will say so if the script actually failed. Do not
+resubmit; that is what created a duplicate August entry the first time this ran.
+
+**"This period is already being posted"** - a job for that month is Queued or Running, so a second
+one is refused. Open the status page it links to and wait. If that job is genuinely stuck (the
+script died mid-run, so it sits at Running forever), delete its `.job.json` file from the
+`Statscore JE Creator` folder in the File Cabinet, then check NetSuite for a partially created
+entry before running again.
 
 **Status says Failed** - the message is on the page. The full stack trace is in
 **Customization > Scripting > Script Execution Log**, filtered to the posting script.

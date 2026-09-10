@@ -36,6 +36,7 @@ define([
     const SAMPLE_LINES = 25;
     const MAX_ACCOUNTS_SHOWN = 250;
     const MAX_ERRORS_SHOWN = 30;
+    const MAX_JOBS_SCANNED = 20;       // recent job files checked for an in-flight run
 
     // -----------------------------------------------------------------------
     // Entry point
@@ -140,7 +141,22 @@ define([
 
         const duplicates = findDuplicates(analysis);
 
+        // A job already queued for this period blocks outright. It is not a
+        // warning with an override: there is no good reason to queue two.
+        let inFlight = null;
+        if (analysis.memo) {
+            try {
+                inFlight = findInFlightJob(analysis.memo, false);
+            } catch (e) {
+                inFlight = null;
+            }
+        }
+        if (inFlight) {
+            analysis.ok = false;
+        }
+
         html += renderSummary(analysis, uploaded.name);
+        html += renderInFlight(inFlight);
         html += renderDuplicates(duplicates);
         html += renderProblems(analysis);
         html += renderSample(analysis);
@@ -201,6 +217,74 @@ define([
                 (e.message || String(e)));
             return [];
         }
+    }
+
+    /**
+     * A job for this period that is already queued or running.
+     *
+     * The posted-entry check cannot see these. NetSuite runs scheduled scripts
+     * from a shared queue that can hold a job for the best part of an hour,
+     * and a page that only says "Queued" invites a second submission that
+     * would post the month twice.
+     *
+     * @param {string} memo   the period memo, e.g. 'Statscore 08/2026'
+     * @param {boolean} strict  throw on a lookup failure instead of returning null
+     * @returns {{fileId: number, job: Object}|null}
+     */
+    function findInFlightJob(memo, strict) {
+        let rows;
+        try {
+            rows = query.runSuiteQL({
+                query: 'SELECT id FROM file WHERE folder = ? AND name LIKE ? ORDER BY id DESC',
+                params: [workFolder(), '%.job.json']
+            }).asMappedResults();
+        } catch (e) {
+            log.error({ title: 'Could not list job files', details: e });
+            if (strict) throw e;
+            return null;
+        }
+
+        for (let i = 0; i < rows.length && i < MAX_JOBS_SCANNED; i++) {
+            let job;
+            try {
+                job = JSON.parse(file.load({ id: rows[i].id }).getContents());
+            } catch (e) {
+                continue;                       // deleted or unreadable, skip it
+            }
+            if (job.memo === memo && (job.status === 'PENDING' || job.status === 'RUNNING')) {
+                return { fileId: Number(rows[i].id), job: job };
+            }
+        }
+        return null;
+    }
+
+    function renderInFlight(inFlight) {
+        if (!inFlight) return '';
+
+        const queued = inFlight.job.status !== 'RUNNING';
+        return panel('error', 'This period is already being posted',
+            '<p>A job for <b>' + esc(inFlight.job.memo) + '</b> ' +
+            (queued ? 'is queued and has not started yet' : 'is being posted right now') +
+            ', submitted by ' + esc(inFlight.job.submittedBy || 'someone') + ' ' +
+            esc(since(inFlight.job.submittedAt)) + '.</p>' +
+            '<p><a href="' + esc(statusUrl(inFlight.fileId)) + '">Watch that job</a></p>' +
+            '<p>Posting again would create a second journal entry for the same month, so this ' +
+            'file cannot be submitted until that job finishes. If it is genuinely stuck, delete ' +
+            'its <code>.job.json</code> file from the <b>' + esc(WORK_FOLDER_NAME) +
+            '</b> folder in the File Cabinet and reload this page.</p>');
+    }
+
+    /** '12 minutes ago' from an ISO timestamp. */
+    function since(iso) {
+        if (!iso) return '';
+        const then = Date.parse(iso);
+        if (isNaN(then)) return '';
+        const mins = Math.floor((Date.now() - then) / 60000);
+        if (mins < 1) return 'less than a minute ago';
+        if (mins === 1) return '1 minute ago';
+        if (mins < 60) return mins + ' minutes ago';
+        const hrs = Math.floor(mins / 60);
+        return hrs + (hrs === 1 ? ' hour ' : ' hours ') + (mins % 60) + ' min ago';
     }
 
     function renderDuplicates(duplicates) {
@@ -385,6 +469,24 @@ define([
             return res.writePage(form);
         }
 
+        // No override on this one. A job already in the queue for this period
+        // means waiting, not posting a second entry.
+        let inFlight;
+        try {
+            inFlight = analysis.memo ? findInFlightJob(analysis.memo, true) : null;
+        } catch (e) {
+            addHtml(form, 'err', styles() + panel('error', 'Not posted',
+                '<p>NetSuite could not be checked for a job already in progress for ' +
+                esc(analysis.memo) + ', so nothing was posted. Try again.</p>' +
+                '<p>' + esc(e.message || String(e)) + '</p>' +
+                '<p><a href="' + esc(selfUrl()) + '">Start again</a></p>'));
+            return res.writePage(form);
+        }
+        if (inFlight) {
+            addHtml(form, 'err', styles() + renderInFlight(inFlight));
+            return res.writePage(form);
+        }
+
         // Strict here, unlike the preview: if the check cannot run we refuse
         // rather than risk a second entry for a month already posted.
         let duplicates;
@@ -519,7 +621,8 @@ define([
         rows += kv('Total debit', lib.fmt(job.totalDebit));
         rows += kv('Total credit', lib.fmt(job.totalCredit));
         rows += kv('Submitted by', esc(job.submittedBy || ''));
-        rows += kv('Submitted at', esc(job.submittedAt || ''));
+        rows += kv('Submitted at', esc(job.submittedAt || '') + (job.submittedAt
+            ? ' <span class="sc-muted">(' + esc(since(job.submittedAt)) + ')</span>' : ''));
         if (job.confirmedDuplicate) {
             rows += kv('Duplicate period', '<span class="sc-bad">Confirmed and posted anyway</span>');
         }
@@ -544,9 +647,19 @@ define([
             html += panel('error', 'The posting script stopped without finishing',
                 '<p>Check the script execution log for the reason, then upload the file again.</p>');
         } else {
-            html += panel('info', 'Working',
-                '<p>Building ' + job.lineCount + ' lines. This page refreshes every 10 seconds; ' +
-                'it is safe to close and come back to.</p>');
+            const queued = job.status === 'PENDING';
+            html += panel('warn',
+                queued ? 'Waiting in the NetSuite script queue' : 'Building the journal entry',
+                (queued
+                    ? '<p>Submitted ' + esc(since(job.submittedAt)) + '. The job has not started yet.</p>' +
+                      '<p>NetSuite runs scheduled scripts from a shared queue. When that queue is ' +
+                      'busy a job can sit here for <b>30 to 60 minutes</b> before it starts. ' +
+                      'That is normal and does not mean anything has failed.</p>'
+                    : '<p>Building ' + job.lineCount + ' lines, started ' +
+                      esc(since(job.startedAt)) + '. Roughly 90 seconds per 4,000 lines.</p>') +
+                '<p class="sc-bad">Do not upload and post this file again while this page is open. ' +
+                'A second submission creates a second journal entry.</p>' +
+                '<p>This page refreshes every 10 seconds. It is safe to close and come back to.</p>');
             html += '<script>setTimeout(function(){location.reload();},10000);</script>';
         }
 
