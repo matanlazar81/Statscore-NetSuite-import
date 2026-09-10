@@ -1,0 +1,6 @@
+Internal ,Account,Debit,Credit,LineMemo,REF,Date,Class,Location (Expenses),Currecny
+119,120003,1.00,,SMOKE TEST - delete this entry,TEST1,15/09/26,,Other,EUR
+213,121008,,1.00,SMOKE TEST - delete this entry,TEST1,15/09/26,,Other,EUR
+119,120003,-2.00,,SMOKE TEST negative debit must post as a credit,TEST2,15/09/26,,Other,EUR
+213,121008,,-2.00,SMOKE TEST negative credit must post as a debit,TEST2,15/09/26,,Other,EUR
+119,120003,0,0,SMOKE TEST zero row must be skipped,TEST3,15/09/26,,Other,EUR
