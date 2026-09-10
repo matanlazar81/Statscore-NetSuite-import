@@ -308,6 +308,30 @@ define([
         return panel('warn', 'A journal entry for this period already exists', body);
     }
 
+    /**
+     * Entries for this period that were not already there when the job was
+     * submitted, so almost certainly this job's own output.
+     */
+    function newlyPosted(job) {
+        if (!job.memo) return [];
+        const before = (job.preExistingJeIds || []).map(String);
+        try {
+            return lib.findExistingJes(job.memo)
+                .filter((d) => before.indexOf(String(d.id)) === -1);
+        } catch (e) {
+            log.error({ title: 'Could not cross-check posted entries', details: e });
+            return [];
+        }
+    }
+
+    function jeUrl(jeId) {
+        return url.resolveRecord({
+            recordType: 'journalentry',
+            recordId: jeId,
+            isEditMode: false
+        });
+    }
+
     function backLink() {
         return '<p style="margin-top:14px"><a href="' + esc(selfUrl()) +
             '">Upload a different file</a></p>';
@@ -527,6 +551,7 @@ define([
             submittedById: user.id,
             submittedAt: new Date().toISOString(),
             confirmedDuplicate: duplicates.length > 0,
+            preExistingJeIds: duplicates.map((d) => String(d.id)),
             taskId: '',
             jeId: null,
             jeTranId: '',
@@ -647,6 +672,22 @@ define([
             html += panel('error', 'The posting script stopped without finishing',
                 '<p>Check the script execution log for the reason, then upload the file again.</p>');
         } else {
+            // Second opinion. The job file is the primary status, but if a
+            // write to it is ever lost the page would sit on "Queued" over a
+            // finished job, which is how a month got posted twice.
+            const appeared = newlyPosted(job);
+            if (appeared.length) {
+                html += panel('error', 'This period now has a journal entry',
+                    '<p>The job file still reads <b>' + esc(job.status) + '</b>, but an entry for ' +
+                    '<b>' + esc(job.memo) + '</b> exists that was not there when this job was ' +
+                    'submitted:</p><ul>' +
+                    appeared.map((d) => '<li><a href="' + esc(jeUrl(d.id)) + '" target="_blank">' +
+                        esc(d.tranid || ('Internal ID ' + d.id)) + '</a> dated ' +
+                        esc(d.trandate) + '</li>').join('') +
+                    '</ul><p>That is almost certainly this job, with its status update lost. ' +
+                    'Open the entry and check it. Do not post the file again.</p>');
+            }
+
             const queued = job.status === 'PENDING';
             html += panel('warn',
                 queued ? 'Waiting in the NetSuite script queue' : 'Building the journal entry',
@@ -743,9 +784,7 @@ define([
 
     function writeJob(jobFileId, job, folderId) {
         if (jobFileId) {
-            const existing = file.load({ id: jobFileId });
-            existing.contents = JSON.stringify(job, null, 2);
-            return existing.save();
+            return lib.writeJson(jobFileId, job);
         }
         const f = file.create({
             name: 'statscore_je_' + new Date().getTime() + '.job.json',

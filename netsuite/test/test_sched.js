@@ -29,6 +29,7 @@ const CSV = [
 ].join('\n');
 
 let FILES, SENT, SAVED_JES, PARAMS, EMAIL_THROWS, SAVE_THROWS;
+let NEXT_FILE_ID = 700;
 
 function baseJob(over) {
     return Object.assign({
@@ -42,7 +43,11 @@ function baseJob(over) {
 }
 
 function reset(job, copyParam) {
-    FILES = { 500: { contents: CSV }, 600: { contents: JSON.stringify(job || baseJob()) } };
+    FILES = {
+        500: { name: 'staged.csv', folder: 9, contents: CSV },
+        600: { name: 'job.job.json', folder: 9, contents: JSON.stringify(job || baseJob()) }
+    };
+    NEXT_FILE_ID = 700;
     SENT = [];
     SAVED_JES = [];
     EMAIL_THROWS = false;
@@ -62,14 +67,34 @@ const runtime = {
 };
 
 const fileMod = {
+    Type: { CSV: 'CSV', JSON: 'JSON' },
+    Encoding: { UTF_8: 'UTF-8', WINDOWS_1252: 'windows-1252' },
     load({ id }) {
         const f = FILES[Number(id)];
         if (!f) throw new Error('That file does not exist. id=' + id);
         return {
+            name: f.name,
+            folder: f.folder,
             getContents: () => f.contents,
             get contents() { return f.contents; },
-            set contents(v) { f.contents = v; },
+            // Faithful to this NetSuite account: assigning to contents on a
+            // LOADED file is silently ignored, no error thrown. Modelling it
+            // any other way would hide the bug that put two duplicate journal
+            // entries in the ledger before anyone noticed.
+            set contents(v) { /* deliberately does nothing */ },
             save: () => Number(id)
+        };
+    },
+    create(o) {
+        // Same name in the same folder overwrites in place and keeps the id.
+        const existing = Object.keys(FILES).find(
+            (id) => FILES[id].name === o.name && FILES[id].folder === o.folder);
+        const id = existing ? Number(existing) : ++NEXT_FILE_ID;
+        return {
+            save() {
+                FILES[id] = { name: o.name, contents: o.contents, folder: o.folder };
+                return id;
+            }
         };
     }
 };
@@ -123,7 +148,7 @@ const urlMod = {
 
 const log = { error() {}, audit() {}, debug() {} };
 
-const lib = loadModule('statscore_je_lib.js', [query]);
+const lib = loadModule('statscore_je_lib.js', [query, fileMod]);
 const sched = loadModule('statscore_je_sched.js',
     [runtime, record, fileMod, query, email, urlMod, log, lib]);
 
@@ -230,7 +255,32 @@ check('JE number still recorded', job().jeTranId === 'JE10529');
 check('execute did not throw', true);
 
 // ---------------------------------------------------------------------------
-console.log('\n6. The duplicate override is carried into the email');
+console.log('\n6. Regression: the job file must really change on disk');
+// file.load().contents = x; save() is a silent no-op on this account. Three of
+// those in a row left a finished job reading "Queued", the page was taken at
+// face value, and the month was posted a second time. The assertions below
+// read the stored bytes back rather than trusting the write.
+reset();
+sched.execute();
+let stored = JSON.parse(FILES[600].contents);
+check('stored status is DONE', stored.status === 'DONE', 'stored: ' + stored.status);
+check('stored JE id', stored.jeId === 332926);
+check('stored JE number', stored.jeTranId === 'JE10529');
+check('stored startedAt', !!stored.startedAt);
+check('stored finishedAt', !!stored.finishedAt);
+check('bytes actually grew past the first write',
+    FILES[600].contents.length > JSON.stringify(baseJob(), null, 2).length,
+    'stored ' + FILES[600].contents.length + ' bytes');
+
+reset();
+SAVE_THROWS = true;
+sched.execute();
+stored = JSON.parse(FILES[600].contents);
+check('a failed run stores ERROR', stored.status === 'ERROR', 'stored: ' + stored.status);
+check('a failed run stores the reason', /no JE permission/.test(stored.error || ''));
+
+// ---------------------------------------------------------------------------
+console.log('\n7. The duplicate override is carried into the email');
 reset(baseJob({ confirmedDuplicate: true }));
 sched.execute();
 check('override shown in the body', /Confirmed and posted anyway/.test(SENT[0].body || ''));

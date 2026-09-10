@@ -211,11 +211,39 @@ Four separate things have to line up before a month can be posted twice:
   at `RUNNING` and will not be picked up again, so a month cannot be posted twice by a retry.
   Check NetSuite for a partial entry before re-running that month.
 
+## A NetSuite gotcha worth knowing about
+
+On this account, the usual way to update a File Cabinet file does **nothing**:
+
+```js
+const f = file.load({ id });
+f.contents = newText;      // silently ignored
+f.save();                  // no error, no change
+```
+
+No exception is thrown, the bytes never change, and `lastmodifieddate` does not move. The job
+files are written with `file.create()` using the same name and folder instead, which overwrites
+in place and keeps the internal ID. `lib.writeJson` does this and then reads the file back to
+prove the write landed, throwing if it did not.
+
+This is not academic. Three lost write-backs in a row left a finished job reporting itself as
+Queued, the page was believed, the file was submitted again, and August ended up posted twice.
+Anything added here that writes to the File Cabinet should go through `lib.writeJson`.
+
+The status page also cross-checks: while a job reads Queued or Running it looks for an entry for
+that period that was not already there when the job was submitted, and says so if it finds one.
+So even if a status write is lost again, the page will not quietly claim nothing has happened.
+
 ## Troubleshooting
 
 **"Could not start the posting script"** - a previous run is still going. Check
 **Customization > Scripting > Script Deployments** for `Statscore JE Creator - Post`, wait for it
 to finish, then submit again.
+
+**"This period now has a journal entry" while the status still says Queued** - the job finished
+but its status update was lost. The entry named in that panel is real. Check it, and do not post
+the file again. Report it: the write is supposed to fail loudly now, so the execution log should
+carry a matching error.
 
 **Status stuck on Queued** - the scheduled script queue is busy with other jobs. It will start.
 Waits of 30 to 60 minutes have been seen on this account. The page shows how long it has been

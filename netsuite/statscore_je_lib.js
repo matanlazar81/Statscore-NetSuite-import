@@ -15,7 +15,7 @@
  *   - every REF group must balance to within 0.02 or the run is blocked
  *   - transaction date is the last day of the detected month
  */
-define(['N/query'], (query) => {
+define(['N/query', 'N/file'], (query, file) => {
 
     const CONFIG = {
         SUBSIDIARY: 6,            // Statscore
@@ -507,11 +507,55 @@ define(['N/query'], (query) => {
         }));
     }
 
+    // -----------------------------------------------------------------------
+    // Job file persistence
+    // -----------------------------------------------------------------------
+
+    /**
+     * Overwrite a File Cabinet file with JSON, and prove it took.
+     *
+     * NOT file.load() then set .contents then .save(). On this account that
+     * pattern is a silent no-op: it throws nothing, the bytes never change,
+     * and a finished job goes on reporting itself as queued. That cost two
+     * duplicate journal entries before it was spotted, because a status page
+     * stuck on "Queued" reads exactly like a job that failed to start.
+     *
+     * file.create() with the same name and folder overwrites in place and
+     * keeps the internal ID, so the status page URL stays valid. The read-back
+     * is the point: a write that quietly does nothing must become a loud
+     * failure, never a stale status.
+     *
+     * @param {number} fileId  the file to overwrite
+     * @param {Object} obj     serialised as the new contents
+     * @returns {number} the file ID, unchanged
+     * @throws if the contents did not change
+     */
+    function writeJson(fileId, obj) {
+        const existing = file.load({ id: fileId });
+        const contents = JSON.stringify(obj, null, 2);
+
+        const savedId = file.create({
+            name: existing.name,
+            fileType: file.Type.JSON,
+            contents: contents,
+            encoding: file.Encoding.UTF_8,
+            folder: existing.folder
+        }).save();
+
+        const readBack = file.load({ id: savedId }).getContents();
+        if (readBack !== contents) {
+            throw new Error('Job file ' + fileId + ' did not accept the update. ' +
+                'It still holds ' + readBack.length + ' bytes, not ' + contents.length + '.');
+        }
+        return savedId;
+    }
+
     return {
         CONFIG: CONFIG,
         analyze: analyze,
         validateAccounts: validateAccounts,
         findExistingJes: findExistingJes,
+        writeJson: writeJson,
         parseCsv: parseCsv,
         parseAmount: parseAmount,
         parseDate: parseDate,

@@ -192,13 +192,23 @@ define([
         }
     }
 
+    /**
+     * Record progress on the job file the status page polls.
+     *
+     * A failure here cannot stop the posting, but it must never be silent:
+     * a stale "Queued" on a job that actually finished is what got a month
+     * posted twice. lib.writeJson verifies the write and throws if it did
+     * not take, so the execution log always shows it.
+     */
     function save(jobFileId, job) {
         try {
-            const f = file.load({ id: jobFileId });
-            f.contents = JSON.stringify(job, null, 2);
-            f.save();
+            lib.writeJson(jobFileId, job);
         } catch (e) {
-            log.error({ title: 'Could not update job file ' + jobFileId, details: e });
+            log.error({
+                title: 'Could not update job file ' + jobFileId,
+                details: 'The status page will keep showing the previous state for this job. ' +
+                    'The journal entry itself is unaffected. ' + (e.message || String(e))
+            });
         }
     }
 

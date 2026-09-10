@@ -18,7 +18,8 @@ eval(fs.readFileSync(LIB, 'utf8'));
 
 // N/query stub: analyze() never touches it; validateAccounts/findExistingJes do.
 const queryStub = { runSuiteQL: () => { throw new Error('query should not be called by analyze()'); } };
-const lib = factory(queryStub);
+const fileStub = { Type: {}, Encoding: {}, load: () => { throw new Error('unused'); }, create: () => { throw new Error('unused'); } };
+const lib = factory(queryStub, fileStub);
 
 let pass = 0, fail = 0;
 function check(name, actual, expected) {

@@ -71,17 +71,26 @@ const fileMod = {
         const f = FILES[Number(id)];
         if (!f) throw new Error('That file does not exist. id=' + id);
         return {
-            folder: f.folder,
             name: f.name,
+            folder: f.folder,
             getContents: () => f.contents,
-            set contents(v) { f.contents = v; },
             get contents() { return f.contents; },
+            // Faithful to this NetSuite account: assigning to contents on a
+            // LOADED file is silently ignored, no error thrown.
+            set contents(v) { /* deliberately does nothing */ },
             save: () => Number(id)
         };
     },
     create(o) {
-        const id = ++NEXT_FILE_ID;
-        return { save() { FILES[id] = { name: o.name, contents: o.contents, folder: o.folder }; return id; } };
+        const existing = Object.keys(FILES).find(
+            (id) => FILES[id].name === o.name && FILES[id].folder === o.folder);
+        const id = existing ? Number(existing) : ++NEXT_FILE_ID;
+        return {
+            save() {
+                FILES[id] = { name: o.name, contents: o.contents, folder: o.folder };
+                return id;
+            }
+        };
     }
 };
 
@@ -127,7 +136,7 @@ const urlMod = {
 };
 const log = { error() {}, audit() {}, debug() {} };
 
-const lib = loadModule('statscore_je_lib.js', [query]);
+const lib = loadModule('statscore_je_lib.js', [query, fileMod]);
 const suitelet = loadModule('statscore_je_suitelet.js',
     [serverWidget, fileMod, query, record, task, runtime, urlMod, log, lib]);
 
@@ -304,6 +313,52 @@ FILES[jobId2].contents = JSON.stringify(
 r = run({ method: 'GET', parameters: { action: 'status', job: String(jobId2) }, files: {} });
 check('RUNNING says building', /Building the journal entry/.test(r.form.html));
 check('RUNNING shows start time', /2 minutes ago/.test(r.form.html));
+
+// ---------------------------------------------------------------------------
+console.log('\n7. Status page cross-checks for an entry the job file missed');
+reset();
+const stuck = addJobFile('PENDING', MEMO);
+FILES[stuck].contents = JSON.stringify(Object.assign(
+    JSON.parse(FILES[stuck].contents), { preExistingJeIds: [] }));
+POSTED_JES = [{ id: 332928, tranid: 'JE10541', trandate: '31/08/2026' }];
+r = run({ method: 'GET', parameters: { action: 'status', job: String(stuck) }, files: {} });
+check('warns that an entry now exists', /This period now has a journal entry/.test(r.form.html));
+check('names the entry', /JE10541/.test(r.form.html));
+check('says not to post again', /Do not post the file again/.test(r.form.html));
+
+console.log('\n7b. An entry that was already there before does not trigger it');
+reset();
+const dup = addJobFile('PENDING', MEMO);
+FILES[dup].contents = JSON.stringify(Object.assign(
+    JSON.parse(FILES[dup].contents), { preExistingJeIds: ['332798'] }));
+POSTED_JES = [{ id: 332798, tranid: 'JE10523', trandate: '31/08/2026' }];
+r = run({ method: 'GET', parameters: { action: 'status', job: String(dup) }, files: {} });
+check('no false alarm on a known duplicate',
+    !/This period now has a journal entry/.test(r.form.html));
+
+console.log('\n7c. Submitting records what was already posted');
+reset();
+const csvId4 = ++NEXT_FILE_ID;
+FILES[csvId4] = { name: 'staged.csv', folder: 199462, contents: CSV };
+POSTED_JES = [{ id: 332798, tranid: 'JE10523', trandate: '31/08/2026' }];
+run({
+    method: 'POST',
+    parameters: {
+        custpage_action: 'create', custpage_csvfile: String(csvId4),
+        custpage_csvname: '0 CSV.csv', custpage_confirm_dup: 'T'
+    },
+    files: {}
+});
+const written = Object.keys(FILES)
+    .filter((id) => /\.job\.json$/.test(FILES[id].name))
+    .map((id) => JSON.parse(FILES[id].contents))[0];
+check('baseline of already-posted entries stored',
+    written && JSON.stringify(written.preExistingJeIds) === '["332798"]',
+    'stored: ' + JSON.stringify(written && written.preExistingJeIds));
+
+console.log('\n7d. Regression: the taskId write-back must land on disk');
+check('job file holds the task id', written && written.taskId === 'TASK_1',
+    'taskId: ' + JSON.stringify(written && written.taskId));
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
